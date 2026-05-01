@@ -5,7 +5,8 @@ import type { MessageTrace, HandshakeTrace } from './store/useAppStore';
 import { RoomEntry } from './components/RoomEntry';
 import { ChatInterface } from './components/ChatInterface';
 import { TraceViewer } from './components/TraceViewer';
-import { ShieldAlert, RefreshCw, Fingerprint, Search } from 'lucide-react';
+import { LandingPage } from './components/LandingPage';
+import { ShieldAlert, RefreshCw, Fingerprint, Search, ArrowLeft } from 'lucide-react';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { 
   arrayBufferToBase64, base64ToArrayBuffer, 
@@ -15,6 +16,7 @@ import {
 const WS_URL = 'ws://localhost:8000/ws';
 
 function App() {
+  const [view, setView] = useState<'landing' | 'chat'>('landing');
   const { 
     room_id, username, setRoomId, setUsername, 
     userId, setUserId, yourRole, setYourRole, users, setUsers, 
@@ -27,11 +29,10 @@ function App() {
   const socketUrl = room_id ? `${WS_URL}/${room_id}` : null;
   const timeoutRef = useRef<any>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
-  
+
   // Trace Viewer State
   const [isTraceOpen, setIsTraceOpen] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<{ type: 'handshake'; data: HandshakeTrace } | { type: 'message'; data: MessageTrace } | null>(null);
-
 
   const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(socketUrl, {
     onOpen: () => {
@@ -40,7 +41,13 @@ function App() {
     shouldReconnect: () => true,
   });
 
+  // Automatically switch to chat view if room_id is set (e.g. from a direct link or join action)
+  useEffect(() => {
+    if (room_id) setView('chat');
+  }, [room_id]);
+
   // Handshake Logic: Initiator (Alice) starts when Bob joins
+
   useEffect(() => {
     if (yourRole === 'initiator' && users.length === 2 && handshakeStatus === 'idle') {
       console.log('Initiating PQC handshake...');
@@ -232,22 +239,36 @@ function App() {
     setIsTraceOpen(true);
   };
 
-  const connectionStatus = {
-    [ReadyState.CONNECTING]: 'Connecting',
-    [ReadyState.OPEN]: 'Open',
-    [ReadyState.CLOSING]: 'Closing',
-    [ReadyState.CLOSED]: 'Closed',
-    [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
-  }[readyState];
+  if (view === 'landing') {
+    return <LandingPage onEnterApp={() => setView('chat')} />;
+  }
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200 selection:bg-cyan-500/30 font-sans p-4 md:p-8">
       {!room_id ? (
-        <RoomEntry onJoin={handleJoin} />
+        <>
+          <nav className="max-w-4xl mx-auto mb-8">
+            <button 
+              onClick={() => setView('landing')}
+              className="flex items-center space-x-2 text-slate-500 hover:text-cyan-400 text-xs font-bold transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back to Explainer</span>
+            </button>
+          </nav>
+          <RoomEntry onJoin={handleJoin} />
+        </>
       ) : (
         <div className="space-y-6">
           <div className="max-w-4xl mx-auto flex items-center justify-between px-2">
             <div className="flex flex-col">
+              <button 
+                onClick={() => { resetRoom(); setView('landing'); }}
+                className="flex items-center space-x-2 text-slate-500 hover:text-cyan-400 text-[10px] font-bold uppercase tracking-widest mb-2 transition-colors"
+              >
+                <ArrowLeft className="w-3 h-3" />
+                <span>Exit to Explainer</span>
+              </button>
               <h2 className="text-xl font-bold text-white flex items-center">
                 Room: <span className="text-cyan-400 ml-2">{room_id}</span>
                 {handshakeStatus === 'complete' && (
