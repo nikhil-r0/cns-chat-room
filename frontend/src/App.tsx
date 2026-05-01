@@ -28,6 +28,9 @@ function App() {
   const timeoutRef = useRef<any>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
   
+  // Trace Viewer State
+  const [isTraceOpen, setIsTraceOpen] = useState(false);
+  const [selectedTrace, setSelectedTrace] = useState<{ type: 'handshake'; data: HandshakeTrace } | { type: 'message'; data: MessageTrace } | null>(null);
 
 
   const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(socketUrl, {
