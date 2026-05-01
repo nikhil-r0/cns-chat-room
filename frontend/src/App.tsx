@@ -39,7 +39,16 @@ function App() {
       sendJsonMessage({ type: 'join_room', username: username });
     },
     shouldReconnect: () => true,
+    onError: (event) => console.error('WebSocket error:', event),
   });
+
+  const connectionStatus = {
+    [ReadyState.CONNECTING]: 'Connecting',
+    [ReadyState.OPEN]: 'Connected',
+    [ReadyState.CLOSING]: 'Closing',
+    [ReadyState.CLOSED]: 'Disconnected',
+    [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
+  }[readyState];
 
   // Automatically switch to chat view if room_id is set (e.g. from a direct link or join action)
   useEffect(() => {
