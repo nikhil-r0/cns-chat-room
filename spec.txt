@@ -1,0 +1,62 @@
+Quantum-Secure Ephemeral Chat (QSEC) & LWE VisualizerProject Specifications & End-to-End Implementation Guide1. Product Overview & RequirementsConcept: A "Dontpad-style" ephemeral, room-based chat application secured by Post-Quantum Cryptography (PQC). It features a real-time, interactive UI visualizer that demonstrates the mathematics of Lattice-Based Cryptography (Learning With Errors) during the key exchange phase.Core Requirements:Ephemeral Nature: No databases. No permanent storage. Chat history exists only in server memory and is wiped when the room is empty or the server restarts.Scope Constraint (2-User Max): To simplify the KEM handshake to a 1-to-1 exchange and avoid complex group-key management, rooms are strictly capped at exactly two concurrent users.Identity & Reconnection: Users pick a username upon entering, stored in sessionStorage. If a user refreshes the page, their ephemeral private keys are destroyed; the server treats them as a new connection, forcing a fresh PQC handshake.Cryptography: End-to-End Encryption (E2EE) using ML-KEM-768 (formerly CRYSTALS-Kyber) for Key Encapsulation. The resulting secret is passed through an HKDF before being used with AES-256-GCM for message ciphering.Visualizer: A side-panel toggle that visually plots the generation of the public matrix, the secret vector, and the injection of "noise" (LWE) on an interactive 2D grid.2. System Architecture2.1 The Tech StackFrontend Framework: React 18+ (with TypeScript), built and served using Vite for optimal developer experience.Styling & Animation: Tailwind CSS + Framer Motion (crucial for smooth LWE grid animations).Backend Server: Python with FastAPI and Uvicorn. (Note: Must configure CORS middleware to allow local Vite dev server port 5173).Transport: Native wss:// (WebSocket Secure). TLS handles the transport layer; ML-KEM handles the application layer.Cryptography Library: @noble/post-quantum. Pure-JavaScript/TypeScript implementation of FIPS-203 (ML-KEM).2.2 Network Flow (The Handshake)To prevent race conditions, the server strictly manages who initiates the key exchange.Join Room: User connects to wss://server/ws/{roomId}.Initiator Selection: The server designates the first user in the room as the "Initiator" (User A) and the second as the "Responder" (User B).Key Generation: User A generates an ML-KEM Keypair.Key Exchange: User A sends their Public Key over the WebSocket to User B.Encapsulation: User B uses User A's Public Key to generate a Shared Secret and a Ciphertext (Encapsulated Key).Return Ciphertext: User B sends the Ciphertext back to User A.Decapsulation: User A uses their Private Key on the Ciphertext to derive the same Shared Secret.Out-of-Band Verification: UI displays an 8-character fingerprint (SHA-256 hash) of the Public Key to mitigate MITM attacks.Error State Handling: If any user disconnects before step 7 is complete, the server broadcasts an abort signal, drops the handshake state, and waits for a new user to restart from Step 1.3. Threat Model & Security MitigationsThreatMitigation StrategyResidual RiskQuantum Eavesdropping (SNDL)ML-KEM-768 handles Key Encapsulation; TLS 1.3 provides transport security.Low. Relying on FIPS-203 mathematical security.Man-in-the-Middle (MITM)The server acts as a relay. To prevent the server from substituting keys, the UI provides a Public Key Fingerprint for users to verify out-of-band.Medium. Relies on users actually checking the fingerprint.Replay AttacksAES-GCM requires a unique 12-byte IV per message.Low. (Optional: Implement message sequence numbers to prevent server re-ordering).Data at Rest ExtractionNo database exists. All keys and states live in volatile RAM.None.4. The Visualizer: Mathematics to UI MappingNote: Cryptography libraries like @noble do not expose raw matrix parameters ($A, \mathbf{s}, \mathbf{e}$) as they return opaque byte arrays. The visualizer is a mathematically accurate conceptual demonstration running in parallel to the actual cryptographic execution.4.1 Animation Logic (React)To correctly animate the "Noise" ($\mathbf{e}$) without breaking React's render cycle, we introduce a tick dependency driven by an animation loop.const [secretPoint, setSecretPoint] = useState({ x: 50, y: 50 });
+const [noiseLevel, setNoiseLevel] = useState(0);
+const [tick, setTick] = useState(0);
+
+// Animation loop to drive the noise jitter
+useEffect(() => {
+  if (noiseLevel === 0) return;
+  const interval = setInterval(() => setTick(t => t + 1), 50);
+  return () => clearInterval(interval);
+}, [noiseLevel]);
+
+// Calculate Public Point (B = A*S + E)
+const publicPoint = useMemo(() => {
+  if (noiseLevel === 0) return secretPoint;
+  const noiseX = (Math.random() - 0.5) * noiseLevel;
+  const noiseY = (Math.random() - 0.5) * noiseLevel;
+  return { x: secretPoint.x + noiseX, y: secretPoint.y + noiseY };
+}, [secretPoint, noiseLevel, tick]); // Re-calculates on every tick
+5. WebSockets Event Protocol (Schema)Payloads are stringified JSON. Byte arrays (Uint8Array) must be encoded to Base64 strings.5.1 Connection & Room Eventsjoin_room: { type: "join_room", username: "string" }room_state: { type: "room_state", users: [{ id: "string", username: "string" }], isInitiator: boolean }user_left: { type: "user_left", userId: "string" } (Server cleans up room if empty).5.2 Cryptography Exchange Eventssend_public_key: { type: "public_key", senderId: "string", publicKeyBase64: "string" }send_encapsulated_key: { type: "encapsulated_key", senderId: "string", ciphertextBase64: "string" }5.3 Messaging Eventschat_message: { type: "chat_message", senderId: "string", encryptedMessageBase64: "string", ivBase64: "string" }6. Cryptography Implementation Details6.1 Key Encapsulation Mechanism (KEM) Flowimport { mlKem768 } from '@noble/post-quantum/ml-kem';
+
+// 1. Initiator: Generate Keypair
+const aliceKeys = mlKem768.keygen();
+const alicePublicKey = aliceKeys.publicKey; // Base64 encode -> WebSocket
+
+// 2. Responder: Encapsulate
+const bobEncapsulation = mlKem768.encapsulate(alicePublicKey);
+const rawSharedSecretBob = bobEncapsulation.sharedSecret; 
+const ciphertext = bobEncapsulation.ciphertext; // Base64 encode -> WebSocket
+
+// 3. Initiator: Decapsulate
+const rawSharedSecretAlice = mlKem768.decapsulate(ciphertext, aliceKeys.secretKey);
+6.2 Key Derivation & Message Encryption (HKDF + AES-GCM)The 32-byte shared secret from ML-KEM cannot be used directly. It must be passed through an HKDF (HMAC-based Extract-and-Expand Key Derivation Function) to derive the final AES-256-GCM key.// Perform KDF to derive secure AES key
+const hkdf = await window.crypto.subtle.importKey(
+    "raw", 
+    rawSharedSecretAlice, // or Bob's
+    "HKDF", 
+    false, 
+    ["deriveKey"]
+);
+
+const aesKey = await window.crypto.subtle.deriveKey(
+  { 
+      name: "HKDF", 
+      hash: "SHA-256", 
+      salt: new Uint8Array(32), 
+      info: new TextEncoder().encode("qsec-chat-v1") 
+  },
+  hkdf,
+  { name: "AES-GCM", length: 256 },
+  false,
+  ["encrypt", "decrypt"]
+);
+
+// Encrypt a chat message
+const iv = window.crypto.getRandomValues(new Uint8Array(12));
+const encodedMessage = new TextEncoder().encode("Hello PQC World!");
+const encryptedPayload = await window.crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv }, 
+    aesKey, 
+    encodedMessage
+);
+7. Implementation MilestonesPhase 1: Foundation (FastAPI & Ephemeral State)Setup Python, FastAPI, and standard websockets. Configure CORS.Run server: uvicorn main:app --reloadCreate ConnectionManager class to handle exactly 2 users, assign initiator roles, and handle user_left cleanup logic.Phase 2: UI & Basic Chat (Vite + React)Scaffold with npm create vite@latest.Build React UI (Room input, User mapping, Chat UI).Phase 3: The PQC IntegrationImplement @noble/post-quantum.Add Base64 encoding/decoding utilities.Implement the HKDF + AES-GCM pipeline.Add the Public Key Fingerprint UI for out-of-band MITM verification.Phase 4: The VisualizerBuild the conceptual <LatticeVisualizer /> side-panel component with Framer Motion.
